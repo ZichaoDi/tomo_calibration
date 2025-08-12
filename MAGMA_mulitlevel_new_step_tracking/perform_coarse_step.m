@@ -1,0 +1,164 @@
+function [y_k_plus_1, s_k, total_equivalent_work,d_k] = perform_coarse_step(x_k, L_level, s, R_level, P_level, k, params, Lf_level, level_no, grad_F_mu_x_k, obj_f_x_k)
+%PERFORM_COARSE_STEP Implements a recursive V-cycle that solves at the coarsest level.
+%   The backtracking line search is not performed at any level of the recursion.
+
+    % --- 1. Parameter and Operator Setup for the NEXT level down ---
+    next_level = level_no + 1;
+
+    L_fine   = L_level{level_no};
+    L_coarse = L_level{next_level};
+    R = R_level{level_no};
+    P = P_level{level_no};
+    lambda = params.lambda; mu = params.mu;
+    NH = params.NH; c = params.c; tau = params.tau;
+
+    % --- 2. Define the Coarse Problem for the NEXT level ---
+    x_H0 = R * x_k;
+    grad_F_mu_fine = grad_F_mu_x_k;
+    grad_F_mu_coarse_initial = calculate_smoothed_gradient(x_H0, L_coarse, s, lambda, params);
+    v_H = R * grad_F_mu_fine - grad_F_mu_coarse_initial;
+    
+    obj_f_coarse = @(x_H) 0.5 * norm(L_coarse * x_H - s)^2 + lambda * sum(sqrt(mu^2 + x_H.^2)) + dot(v_H, x_H);
+    grad_f_coarse = @(x_H) L_coarse' * (L_coarse * x_H - s) + lambda * (x_H ./ sqrt(mu^2 + x_H.^2)) + v_H;
+    
+    % --- 3. Recursive Solver Logic ---
+    if next_level == length(L_level)
+        % --- BASE CASE: We have reached the COARSEST level ---
+        fprintf('    -> [Level %d] Solving at COARSEST level with MFISTA...\n', next_level);
+        prox_op_coarse = @(x, l) x;
+        x_H_final = mfista_solver(obj_f_coarse, @(x) 0, grad_f_coarse, prox_op_coarse, x_H0, Lf_level{next_level}, lambda, NH);
+        coarsest_level_factor = get_work_factor(next_level);
+        total_equivalent_work = NH * coarsest_level_factor;
+    else
+        % --- RECURSIVE STEP: Go one level deeper ---
+        fprintf('    -> [Level %d] Recursing to solve problem at Level %d...\n', level_no, next_level);
+        [x_H_final, ~, work_from_below,d_k] = perform_coarse_step( ...
+            x_H0, L_level, s, R_level, P_level, k, params, Lf_level, ...
+            next_level, grad_F_mu_coarse_initial + v_H, obj_f_coarse(x_H0) ...
+        );
+        total_equivalent_work = work_from_below;
+    end
+    
+    %The correction is calculated and applied at each level on the way back up the recursion.
+    d_k = P * (x_H_final - x_H0);
+    
+    % if level_no == 1
+        % --- TOP LEVEL CALL: Perform the line search to find the optimal step size s_k ---
+        % fprintf('    -> [Level %d] Performing final backtracking line search...\n', level_no);
+        s_k = 1.0; 
+        % F_mu_k = obj_f_x_k + lambda * sum(sqrt(mu^2 + x_k.^2)); 
+        descent_term = dot(d_k, grad_F_mu_fine);
+
+        if descent_term >= 0
+            fprintf('    -> Warning: Coarse direction is not a descent direction. Taking zero step.\n');
+            y_k_plus_1 = x_k; s_k = 0;
+            return;
+        else
+            % while true
+                y_k_plus_1 = x_k + s_k * d_k;
+            %     F_mu_candidate = calculate_smoothed_objective(y_k_plus_1, L_fine, s, lambda, params);
+            %     if F_mu_candidate <= F_mu_k + c * s_k * descent_term
+            %         fprintf('    -> Line search success. Step size s_k = %.4f\n', s_k);
+            %         break; 
+            %     end
+            %     s_k = s_k * tau;
+            %     if s_k < 1e-4
+            %         fprintf('    -> Warning: Line search failed. Taking zero step.\n');
+            %         y_k_plus_1 = x_k; s_k = 0;
+            %         y_k_plus_1 = max(0, y_k_plus_1); % Ensure non-negativity
+            %         return;
+            %     end
+            % end
+        end
+        % y_k_plus_1 = x_k + s_k * d_k; % Apply correction with optimal step size
+        % Ensure non-negativity before returning
+
+        y_k_plus_1 = max(0, y_k_plus_1);
+        
+    % else
+    %     % --- RECURSIVE SUB-CALL: Apply correction with a fixed step size of 1 ---
+    %     % We don't do a line search here. We compute the corrected solution on this
+    %     % grid and return it to the level above.
+    %     s_k = 1.0; % Use a fixed step size for intermediate levels
+    %     y_k_plus_1 = x_k + s_k*d_k; % Apply the full correction
+    % end
+end
+
+% function [y_k_plus_1, s_k, total_equivalent_work] = perform_coarse_step(x_k, L_level, s, R_total, P_total, k, params, Lf_level, level_no, x_star, grad_F_mu_x_k, obj_f_x_k)
+% %PERFORM_COARSE_STEP Implements a non-recursive, direct two-grid correction.
+% %   This version receives pre-composed total operators for efficiency.
+% 
+%     fprintf('    -> Performing direct two-grid correction (Fine <-> Coarsest)...\n');
+% 
+%     % --- 1. Identify Grid Levels ---
+%     coarsest_level_idx = length(L_level);
+% 
+%     % --- 2. Go Down: Use Pre-composed Restriction Operator ---
+%     % The total restriction operator R_total is now passed in directly.
+%     x_coarse_initial = R_total * x_k;
+% 
+%     % --- 3. Define and Solve the Coarsest Problem using MFISTA ---
+%     fprintf('    -> Solving problem on coarsest level (%d) with MFISTA...\n', coarsest_level_idx);
+%     L_coarse = L_level{coarsest_level_idx};
+%     Lf_coarse = Lf_level{coarsest_level_idx};
+%     lambda = params.lambda;
+%     mu = params.mu;
+%     NH = params.NH;
+% 
+%     % --- 3a. Re-introduce Coherence Term for MFISTA ---
+%     grad_F_mu_fine = grad_F_mu_x_k;
+%     grad_F_mu_coarse_initial = L_coarse' * (L_coarse * x_coarse_initial - s) + lambda * (x_coarse_initial ./ sqrt(mu^2 + x_coarse_initial.^2));
+%     v_H = R_total * grad_F_mu_fine - grad_F_mu_coarse_initial;
+% 
+%     % --- 3b. Define Smoothed Objective and Gradient for MFISTA ---
+%     obj_f_coarse = @(x_H) 0.5 * norm(L_coarse * x_H - s)^2 + lambda * sum(sqrt(mu^2 + x_H.^2)) + dot(v_H, x_H);
+%     grad_f_coarse = @(x_H) L_coarse' * (L_coarse * x_H - s) + lambda * (x_H ./ sqrt(mu^2 + x_H.^2)) + v_H;
+%     obj_g_coarse = @(x) 0; % g is absorbed into the smoothed objective f
+%     prox_op_coarse = @(x, l) x; % Proximal operator is the identity for smoothed problem
+% 
+%     % --- 3c. Solve the coarse problem using MFISTA ---
+%     x_coarse_final = mfista_solver(obj_f_coarse, obj_g_coarse, grad_f_coarse, prox_op_coarse, x_coarse_initial, Lf_coarse, lambda, NH);
+% 
+%     % Calculate the equivalent work done for this coarse solve.
+%     coarsest_level_factor = get_work_factor(coarsest_level_idx);
+%     total_equivalent_work = NH * coarsest_level_factor;
+% 
+%     % --- 4. Go Up: Use Pre-composed Prolongation Operator ---
+%     % The total prolongation operator P_total is now passed in directly.
+%     d_k = 4*P_total * (x_coarse_final - x_coarse_initial);
+% 
+%     % --- 5. Perform Line Search on the Fine Grid ---
+%     fprintf('    -> Performing final backtracking line search...\n');
+%     s_k = 1.0; 
+%     F_mu_k = obj_f_x_k + lambda * sum(sqrt(mu^2 + x_k.^2)); 
+%     descent_term = dot(d_k, grad_F_mu_x_k);
+%     c = params.c;
+%     tau = params.tau;
+% 
+%     if descent_term >= 0
+%         fprintf('    -> Warning: Coarse direction is not a descent direction. Taking zero step.\n');
+%         y_k_plus_1 = x_k; s_k = 0;
+%         y_k_plus_1 = max(0, y_k_plus_1); % Ensure non-negativity
+%         return;
+%     end
+% 
+%     while true
+%         y_candidate = x_k + s_k * d_k;
+%         F_mu_candidate = calculate_smoothed_objective(y_candidate, L_level{1}, s, lambda, params);
+%         if F_mu_candidate <= F_mu_k + c * s_k * descent_term
+%             fprintf('    -> Line search success. Step size s_k = %.4f\n', s_k);
+%             break; 
+%         end
+%         s_k = s_k * tau;
+%         if s_k < 1e-4
+%             fprintf('    -> Warning: Line search failed. Taking zero step.\n');
+%             y_k_plus_1 = x_k; s_k = 0;
+%             y_k_plus_1 = max(0, y_k_plus_1); % Ensure non-negativity
+%             return;
+%         end
+%     end
+%     y_k_plus_1 = x_k + s_k * d_k; % Apply correction with optimal step size
+% 
+%     % Ensure non-negativity before returning
+%     y_k_plus_1 = max(0, y_k_plus_1);
+% end
