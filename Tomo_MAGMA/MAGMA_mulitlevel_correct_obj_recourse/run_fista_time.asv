@@ -1,0 +1,120 @@
+% run_magma.m - Main Driver Script for MAGMA Tomography Reconstruction
+
+clear; clc; close all;
+
+echo off
+
+%% 1. Problem Setup
+sampleName = 'Phantom'; % choose from {'Phantom', 'Brain', ''Golosio', 'circle', 'checkboard', 'fakeRod'}; not case-sensitive
+
+Nx = 257; Ny = Nx; WSz = [Ny, Nx]; %  XH: Ny = 100 -> 10 or 50 for debug.  currently assume object shape is square not general rectangle
+
+WGT = createObject(sampleName, WSz); 
+
+WGT = WGT/max(WGT(:)); assert(all(WGT(:)>=0), 'Groundtruth object should be nonnegative');% Object without noise. always assume WGT0 is normailzed with maximum 1.
+
+NTheta = 90;  % 30/45/60/90 sample angle #. Use odd NOT even, for display purpose of sinagram of Phantom. As even NTheta will include theta of 90 degree where sinagram will be very bright as Phantom sample has verical bright line on left and right boundary.
+NTau = ceil(sqrt(sum(WSz.^2))); NTau = NTau + rem(NTau-Ny,2); % number of discrete beam, enough to cover object diagonal, plus tolarence with maxDrift, also use + rem(NTau-Ny,2) to make NTau the same odd/even as Ny just for perfection, so that for theta=0, we have sum(WGT, 2)' and  S(1, (1:Ny)+(NTau-Ny)/2) are the same with a scale factor
+SSz = [NTheta, NTau];
+
+gaussianSTD = 0; % 0.01; % [0, 0.01, 0.05] % noise
+
+L = XTM_Tensor_XH(WSz, NTheta, NTau, 0, WGT);
+LNormalizer = full(max(sum(L,2)));
+L = L/LNormalizer;
+
+S = reshape(L*WGT(:), NTheta, NTau);
+SMax = max(S(:));        
+rng('default'); % same random number for initial test
+S = imnoise(S/SMax, 'gaussian', 0, gaussianSTD^2)*SMax; % add noise to [0, 1 ] grayscale image, imnoise add gaussian noise but also seems to still threshold the noisy image to [0, 1]                 
+
+figNo = 1;
+figure(figNo+1); imagesc(WGT); axis image; title('Object Ground Truth');
+figure(figNo+2); multAxes(@imagesc, S); title('Sinogram');linkAxesXYZLimColorView(); 
+
+s = reshape(S,NTau*NTheta,1);
+%% 2. Algorithm Parameters
+% These are based on the paper's experiments (Section 4.3)
+params.lambda = 1e-5;   % Regularization parameter
+params.kappa = 0.7;     % Coarse direction selection threshold (3.4)
+params.theta = 0.1;     % Proximity threshold (e.g., 0.1 * ||x||) (3.4)
+params.Kd = 30;         % Max consecutive gradient steps (3.4)
+params.NH = 10;         % Number of iterations for the coarse-level solver
+params.T = 50;         % Max iterations for the main MAGMA loop
+params.mu = 1e-4;       % NEW: Smoothing parameter for the gradient calculation
+params.c = 0.5;         % Armijo line search parameter, a typical value
+params.tau = 0.95;           % Line search shrinkage factor (e.g., 0.95)
+
+%% 3. Multilevel Operator Setup
+fprintf('Setting up multilevel operators...\n');
+num_levels = 4; % Example: 128 -> 64 -> 32 -> 16 -> 8
+[L_level, R_level, P_level, N_vec, Lf_level, LtL_level] = setup_multilevel_operators(L, Nx, num_levels);
+% L_level{1} is your fine matrix L
+% R_level{1} is the restriction op from level 1 to 2
+% P_level{1} is the prolongation op from level 2 to 1
+
+%% 4. Initialization
+fprintf('Initializing variables...\n');
+x0 = ones(Nx^2, 1); % Initial guess is a black image
+
+%%
+max_iters = 200;
+obj_f_fine = @(x) norm(L_fine * x - s);
+obj_g_fine =  @(x) params.lambda * norm(x,1);
+grad_F_fine = @(x) L_fine' * (L_fine* x - s); %grad of f (only the smooth part)
+x_star = reshape(WGT, Nx*Nx,1);
+% x_recon_fista = fista_solver(grad_F_fine,@prox_g,x0,Lf_fine,params.lambda,500);
+
+[x_recon_fista, history_fista] = fista_solver_instrumented(obj_f_fine, obj_g_fine, grad_F_fine, @prox_g, x0, Lf_fine, ...
+    params.lambda, max_iters, x_star);
+
+%% 6. Display Results
+figure;
+W_magma_recon = reshape(x_reconstructed, Nx, Nx);
+imagesc(W_magma_recon)
+% colormap(gray);
+axis image;
+title('MAGMA Reconstructed Image');
+
+figure;
+W_fista_recon = reshape(x_recon_fista, Nx, Nx);
+imagesc(W_fista_recon)
+% colormap(gray);
+axis image;
+title('FISTA Reconstructed Image');
+%%
+
+figure;
+semilogy(history_fista.iter, history_fista.grad_norm, 'LineWidth', 1.5);
+
+figure;
+semilogy(history_fista.iter, history_fista.obj_val, 'LineWidth', 1.5);
+
+figure;
+semilogy(history_fista.iter, history_fista.gt_error, 'LineWidth', 1.5);
+
+
+%%
+%% II: Solve linear inverse problem: L*W = S
+regType = 'L1'; % 'TV' or 'L1' % TV is better and cleaner for phantom example
+maxIterA = 200; % 100 is not enough
+regWt = 1e-8; % 1.3e05 or 1e-5 similar or 1e-8*max(WGT(:))/LNormalizer^2;  1e-6 to 1e-8 both good for phantom, use 1e-8 for brain, especically WGT is scaled to maximum of 1 not 40
+maxSVDofA = 1e-4; % for TV, maxSVDofA = 1e-5/1e-4 or 1e-6/LNormalizer^2 NOT maxSVDofA = 1e-6/LNormalizer,  make sure it is actually much smaller than svds(L, 1), so that first step in TwIST is long enough 
+paraTwist = {'xSz', [Nx,Nx], 'regFun', regType, 'regWt', regWt, 'isNonNegative', 1, 'maxIterA', maxIterA, 'xGT', WGT, 'maxSVDofA', maxSVDofA, 'tolA', 1e-8};
+if exist('lambda0','var');   paraTwist{6} = lambda0;   end
+
+x_recon_twist = solveTwist(s, L_fine, paraTwist{:});
+
+%%
+echo off
+figure;
+
+w = reshape(x_recon_twist,Nx,Nx);
+
+imagesc(w)
+
+%%
+psnr(W_magma_recon,WGT)
+psnr(W_fista_recon,WGT)
+%%
+psnr(w,WGT)

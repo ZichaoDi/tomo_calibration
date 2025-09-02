@@ -53,7 +53,7 @@ function [L_level, R_level, P_level, N_vec, Lf_level] = setup_multilevel_operato
         P = sparse(R');
 
         R_level{level} = (1)*R;
-        P_level{level} = (1)*P;
+        P_level{level} = (1.2)*P;
         fprintf('  -> Stored R and P for level %d.\n', level);
 
         L_fine_current = L_level{level};

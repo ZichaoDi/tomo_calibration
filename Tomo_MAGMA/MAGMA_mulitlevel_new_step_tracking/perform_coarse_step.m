@@ -21,12 +21,36 @@ function [y_k_plus_1, s_k, total_equivalent_work,d_k] = perform_coarse_step(x_k,
     obj_f_coarse = @(x_H) 0.5 * norm(L_coarse * x_H - s)^2 + lambda * sum(sqrt(mu^2 + x_H.^2)) + dot(v_H, x_H);
     grad_f_coarse = @(x_H) L_coarse' * (L_coarse * x_H - s) + lambda * (x_H ./ sqrt(mu^2 + x_H.^2)) + v_H;
     
+    % --- Gradient Checking ---
+    DEBUG_GRADIENT_CHECK = false;
+    if DEBUG_GRADIENT_CHECK
+        fprintf('--- Running Gradient Check for Level %d -> %d ---\n', level_no, next_level);
+        % check_point = rand(size(x_H0)); 
+        check_point = x_H0;
+        
+        % Using the Optimization Toolbox's checkGradients correctly
+        [valid, err] = checkGradients(@(x) gradient_checker_wrapper(x, obj_f_coarse, grad_f_coarse), check_point);
+        
+        % The relative error vector is in the 'Objective' field of the 'err' struct
+        diff_norm = norm(err.Objective);
+        
+        fprintf('Norm of relative difference vector: %e\n', diff_norm);
+        
+        % The function already returns a 'valid' flag based on its internal tolerance
+        if ~valid
+            warning('Gradient may be incorrect! checkGradients returned false.');
+        else
+            fprintf('Gradient check passed successfully.\n');
+        end
+        fprintf('-----------------------------------------------\n');
+    end
+
     % --- 3. Recursive Solver Logic ---
     if next_level == length(L_level)
         % --- BASE CASE: We have reached the COARSEST level ---
         fprintf('    -> [Level %d] Solving at COARSEST level with MFISTA...\n', next_level);
         prox_op_coarse = @(x, l) x;
-        x_H_final = mfista_solver(obj_f_coarse, @(x) 0, grad_f_coarse, prox_op_coarse, x_H0, Lf_level{next_level}, lambda, NH);
+        x_H_final = mfista_solver(obj_f_coarse, @(x) 0, grad_f_coarse, prox_op_coarse, x_H0, Lf_level{next_level}, lambda, NH,params.tolerance);
         coarsest_level_factor = get_work_factor(next_level);
         total_equivalent_work = NH * coarsest_level_factor;
     else
@@ -53,34 +77,34 @@ function [y_k_plus_1, s_k, total_equivalent_work,d_k] = perform_coarse_step(x_k,
             fprintf('    -> Warning: Coarse direction is not a descent direction. Taking zero step.\n');
             y_k_plus_1 = x_k; s_k = 0;
             return;
-        else
-            % while true
-                y_k_plus_1 = x_k + s_k * d_k;
-            %     F_mu_candidate = calculate_smoothed_objective(y_k_plus_1, L_fine, s, lambda, params);
-            %     if F_mu_candidate <= F_mu_k + c * s_k * descent_term
-            %         fprintf('    -> Line search success. Step size s_k = %.4f\n', s_k);
-            %         break; 
-            %     end
-            %     s_k = s_k * tau;
-            %     if s_k < 1e-4
-            %         fprintf('    -> Warning: Line search failed. Taking zero step.\n');
-            %         y_k_plus_1 = x_k; s_k = 0;
-            %         y_k_plus_1 = max(0, y_k_plus_1); % Ensure non-negativity
-            %         return;
-            %     end
+        % else
+        %     while true
+        %         y_k_plus_1 = x_k + s_k * d_k;
+        %         F_mu_candidate = calculate_smoothed_objective(y_k_plus_1, L_fine, s, lambda, params);
+        %         if F_mu_candidate <= F_mu_k + c * s_k * descent_term
+        %             fprintf('    -> Line search success. Step size s_k = %.4f\n', s_k);
+        %             break; 
+        %         end
+        %         s_k = s_k * tau;
+        %         if s_k < 1e-4
+        %             fprintf('    -> Warning: Line search failed. Taking zero step.\n');
+        %             y_k_plus_1 = x_k; s_k = 0;
+        %             % y_k_plus_1 = max(0, y_k_plus_1); % Ensure non-negativity
+        %             return;
+        %         end
             % end
         end
-        % y_k_plus_1 = x_k + s_k * d_k; % Apply correction with optimal step size
+        y_k_plus_1 = x_k + s_k * d_k; % Apply correction with optimal step size
         % Ensure non-negativity before returning
 
         y_k_plus_1 = max(0, y_k_plus_1);
         
     % else
-    %     % --- RECURSIVE SUB-CALL: Apply correction with a fixed step size of 1 ---
-    %     % We don't do a line search here. We compute the corrected solution on this
-    %     % grid and return it to the level above.
-    %     s_k = 1.0; % Use a fixed step size for intermediate levels
-    %     y_k_plus_1 = x_k + s_k*d_k; % Apply the full correction
+        % --- RECURSIVE SUB-CALL: Apply correction with a fixed step size of 1 ---
+        % We don't do a line search here. We compute the corrected solution on this
+        % grid and return it to the level above.
+        % s_k = 1.0; % Use a fixed step size for intermediate levels
+        % y_k_plus_1 = x_k + s_k*d_k; % Apply the full correction
     % end
 end
 

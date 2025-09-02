@@ -1,8 +1,6 @@
 function [y_k_plus_1, s_k, total_equivalent_work,d_k] = perform_coarse_step(x_k, L_level, s, R_level, P_level, k, params, Lf_level, level_no, grad_F_mu_x_k, obj_f_x_k)
 %PERFORM_COARSE_STEP Implements a recursive V-cycle that solves at the coarsest level.
-%   This version is CORRECTED. It ensures each recursive level returns a
-%   vector of the correct dimension. The backtracking line search is
-%   performed ONLY at the top level of the recursion.
+%   The backtracking line search is not performed at any level of the recursion.
 
     % --- 1. Parameter and Operator Setup for the NEXT level down ---
     next_level = level_no + 1;
@@ -19,6 +17,7 @@ function [y_k_plus_1, s_k, total_equivalent_work,d_k] = perform_coarse_step(x_k,
     grad_F_mu_fine = grad_F_mu_x_k;
     grad_F_mu_coarse_initial = calculate_smoothed_gradient(x_H0, L_coarse, s, lambda, params);
     v_H = R * grad_F_mu_fine - grad_F_mu_coarse_initial;
+    
     obj_f_coarse = @(x_H) 0.5 * norm(L_coarse * x_H - s)^2 + lambda * sum(sqrt(mu^2 + x_H.^2)) + dot(v_H, x_H);
     grad_f_coarse = @(x_H) L_coarse' * (L_coarse * x_H - s) + lambda * (x_H ./ sqrt(mu^2 + x_H.^2)) + v_H;
     
@@ -27,7 +26,7 @@ function [y_k_plus_1, s_k, total_equivalent_work,d_k] = perform_coarse_step(x_k,
         % --- BASE CASE: We have reached the COARSEST level ---
         fprintf('    -> [Level %d] Solving at COARSEST level with MFISTA...\n', next_level);
         prox_op_coarse = @(x, l) x;
-        x_H_final = mfista_solver(obj_f_coarse, @(x) 0, grad_f_coarse, prox_op_coarse, x_H0, Lf_level{next_level}, lambda, NH);
+        x_H_final = mfista_solver(obj_f_coarse, @(x) 0, grad_f_coarse, prox_op_coarse, x_H0, Lf_level{next_level}, lambda, NH,params.tolerance);
         coarsest_level_factor = get_work_factor(next_level);
         total_equivalent_work = NH * coarsest_level_factor;
     else
@@ -40,50 +39,49 @@ function [y_k_plus_1, s_k, total_equivalent_work,d_k] = perform_coarse_step(x_k,
         total_equivalent_work = work_from_below;
     end
     
-    % --- 4. Apply Correction (This now runs at EVERY level) ---
-    % This is the key change. The correction is calculated and applied at each
-    % level on the way back up the recursion.
+    %The correction is calculated and applied at each level on the way back up the recursion.
     d_k = P * (x_H_final - x_H0);
     
-    if level_no == 1
+    % if level_no == 1
         % --- TOP LEVEL CALL: Perform the line search to find the optimal step size s_k ---
-        fprintf('    -> [Level %d] Performing final backtracking line search...\n', level_no);
+        % fprintf('    -> [Level %d] Performing final backtracking line search...\n', level_no);
         s_k = 1.0; 
-        F_mu_k = obj_f_x_k + lambda * sum(sqrt(mu^2 + x_k.^2)); 
+        % F_mu_k = obj_f_x_k + lambda * sum(sqrt(mu^2 + x_k.^2)); 
         descent_term = dot(d_k, grad_F_mu_fine);
 
         if descent_term >= 0
             fprintf('    -> Warning: Coarse direction is not a descent direction. Taking zero step.\n');
             y_k_plus_1 = x_k; s_k = 0;
-            y_k_plus_1 = max(0, y_k_plus_1); % Ensure non-negativity
             return;
-        end
-
-        while true
-            y_candidate = x_k + s_k * d_k;
-            F_mu_candidate = calculate_smoothed_objective(y_candidate, L_fine, s, lambda, params);
-            if F_mu_candidate <= F_mu_k + c * s_k * descent_term
-                fprintf('    -> Line search success. Step size s_k = %.4f\n', s_k);
-                break; 
-            end
-            s_k = s_k * tau;
-            if s_k < 1e-4
-                fprintf('    -> Warning: Line search failed. Taking zero step.\n');
-                y_k_plus_1 = x_k; s_k = 0;
-                y_k_plus_1 = max(0, y_k_plus_1); % Ensure non-negativity
-                return;
-            end
+        % else
+        %     while true
+        %         y_k_plus_1 = x_k + s_k * d_k;
+        %         F_mu_candidate = calculate_smoothed_objective(y_k_plus_1, L_fine, s, lambda, params);
+        %         if F_mu_candidate <= F_mu_k + c * s_k * descent_term
+        %             fprintf('    -> Line search success. Step size s_k = %.4f\n', s_k);
+        %             break; 
+        %         end
+        %         s_k = s_k * tau;
+        %         if s_k < 1e-4
+        %             fprintf('    -> Warning: Line search failed. Taking zero step.\n');
+        %             y_k_plus_1 = x_k; s_k = 0;
+        %             % y_k_plus_1 = max(0, y_k_plus_1); % Ensure non-negativity
+        %             return;
+        %         end
+            % end
         end
         y_k_plus_1 = x_k + s_k * d_k; % Apply correction with optimal step size
         % Ensure non-negativity before returning
+
         y_k_plus_1 = max(0, y_k_plus_1);
-    else
+        
+    % else
         % --- RECURSIVE SUB-CALL: Apply correction with a fixed step size of 1 ---
         % We don't do a line search here. We compute the corrected solution on this
         % grid and return it to the level above.
-        s_k = 1.0; % Use a fixed step size for intermediate levels
-        y_k_plus_1 = x_k + s_k*d_k; % Apply the full correction
-    end
+        % s_k = 1.0; % Use a fixed step size for intermediate levels
+        % y_k_plus_1 = x_k + s_k*d_k; % Apply the full correction
+    % end
 end
 
 % function [y_k_plus_1, s_k, total_equivalent_work] = perform_coarse_step(x_k, L_level, s, R_total, P_total, k, params, Lf_level, level_no, x_star, grad_F_mu_x_k, obj_f_x_k)
