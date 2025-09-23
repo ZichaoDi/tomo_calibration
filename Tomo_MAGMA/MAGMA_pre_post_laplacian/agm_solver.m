@@ -1,4 +1,4 @@
-function [x, history] = agm_solver(obj_f, obj_g, grad_f, prox_op, Lf_current, s, x0, params, x_star)
+function [x, history] = agm_solver(obj_f, obj_g, grad_f, prox_op, Lf_current, x0, params)
 %AGM_SOLVER An accelerated gradient method 
 %of the user's MAGMA solver, with the coarse-step logic removed.
 
@@ -17,7 +17,7 @@ function [x, history] = agm_solver(obj_f, obj_g, grad_f, prox_op, Lf_current, s,
     % --- History Allocation ---
     history.iter = zeros(T, 1);
     history.obj_val = zeros(T, 1);
-    history.gt_error = zeros(T, 1);
+    % history.gt_error = zeros(T, 1);
     history.x_change = zeros(T, 1);
     % Added history for plotting the vectors, as requested
     history.y_k_hist = zeros(numel(x0), T);
@@ -36,7 +36,7 @@ function [x, history] = agm_solver(obj_f, obj_g, grad_f, prox_op, Lf_current, s,
         % --- This is the Gradient Step logic from magma_solver's 'else' branch ---
         grad_at_xk = grad_f(x_k);
         y_k_plus_1 = prox_op(x_k - (1/Lf_current) * grad_at_xk, lambda/Lf_current);
-        y_k_plus_1 = max(0, y_k_plus_1);
+        % y_k_plus_1 = max(0, y_k_plus_1);
         
         % --- Parameter updates (Kept exactly from magma_solver) ---
         eta_k_plus_1 = Lf_current;
@@ -57,7 +57,7 @@ function [x, history] = agm_solver(obj_f, obj_g, grad_f, prox_op, Lf_current, s,
         % --- Record History (Kept exactly as in magma_solver) ---
         history.iter(k) = k;
         history.obj_val(k) = obj_f(x_k) + obj_g(x_k); % Logging based on x_k
-        history.gt_error(k) = norm(x_k - x_star);    % Logging based on x_k
+        % history.gt_error(k) = norm(x_k - x_star);    % Logging based on x_k
         history.x_change(k) = norm1(x_k - x_k_old) / numel(x_k); % Logging based on x_k
         
 
@@ -67,7 +67,7 @@ function [x, history] = agm_solver(obj_f, obj_g, grad_f, prox_op, Lf_current, s,
             % Trim history arrays
             history.iter = history.iter(1:k);
             history.obj_val = history.obj_val(1:k);
-            history.gt_error = history.gt_error(1:k);
+            % history.gt_error = history.gt_error(1:k);
             history.x_change = history.x_change(1:k);
             history.y_k_hist = history.y_k_hist(:, 1:k);
             break;

@@ -13,7 +13,7 @@ WGT = createObject(sampleName, WSz);
 
 WGT = WGT/max(WGT(:)); assert(all(WGT(:)>=0), 'Groundtruth object should be nonnegative');% Object without noise. always assume WGT0 is normailzed with maximum 1.
 
-NTheta = 45;  % 30/45/60/90 sample angle #. Use odd NOT even, for display purpose of sinagram of Phantom. As even NTheta will include theta of 90 degree where sinagram will be very bright as Phantom sample has verical bright line on left and right boundary.
+NTheta = 20;  % 30/45/60/90 sample angle #. Use odd NOT even, for display purpose of sinagram of Phantom. As even NTheta will include theta of 90 degree where sinagram will be very bright as Phantom sample has verical bright line on left and right boundary.
 NTau = ceil(sqrt(sum(WSz.^2))); NTau = NTau + rem(NTau-Ny,2); % number of discrete beam, enough to cover object diagonal, plus tolarence with maxDrift, also use + rem(NTau-Ny,2) to make NTau the same odd/even as Ny just for perfection, so that for theta=0, we have sum(WGT, 2)' and  S(1, (1:Ny)+(NTau-Ny)/2) are the same with a scale factor
 SSz = [NTheta, NTau];
 
@@ -38,7 +38,7 @@ x_star = reshape(WGT, Nx*Nx,1); %ground truth
 %% 2. Algorithm Parameters
 % These are based on the paper's experiments (Section 4.3)
 params.lambda = 1e-6;   % Regularization parameter
-params.kappa = 0.7;     % Coarse direction selection threshold (3.4)
+params.kappa = 0.1;     % Coarse direction selection threshold (3.4)
 params.theta = 1;     % Proximity threshold (e.g., 0.1 * ||x||) (3.4)
 params.Kd = 30;         % Max consecutive gradient steps (3.4)
 params.NH = 10;         % Number of iterations for the coarse-level solver
@@ -57,7 +57,7 @@ params.fista_factor = 1;
 
 %% 3. Multilevel Operator Setup
 fprintf('Setting up multilevel operators...\n');
-num_levels = 3; % Example: 128 -> 64 -> 32 -> 16 -> 8
+num_levels = 2; % Example: 128 -> 64 -> 32 -> 16 -> 8
 [L_level, R_level, P_level, N_vec, Lf_level] = setup_multilevel_operators_new(L, Nx, num_levels);
 % L_level{1} is your fine matrix L
 % R_level{1} is the restriction op from level 1 to 2

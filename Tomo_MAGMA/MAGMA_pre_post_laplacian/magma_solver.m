@@ -1,4 +1,4 @@
-function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f, prox_op, L_current, Lf_current, R_current, s, x0, params, level_no, x_star)
+function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f, prox_op, L_current, Lf_current, R_current, x0, params, level_no)
 %MAGMA_SOLVER General MAGMA solver engine that tracks equivalent work.
     
     % --- Unpack Parameters ---
@@ -24,7 +24,7 @@ function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f,
     if is_fine_level
         history.iter = zeros(T, 1);
         history.obj_val = zeros(T, 1);
-        history.gt_error = zeros(T, 1);
+        % history.gt_error = zeros(T, 1);
         history.x_change = zeros(T, 1);
         history.cumulative_work = zeros(T, 1);
         history.coarse_step_updates = {}; % For y_k+1 from coarse step
@@ -62,7 +62,7 @@ function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f,
         if attempt_coarse_step
             % --- Attempt Coarse Correction Step ---
             [y_k_plus_1_coarse, s_k, coarse_work, d_k] = perform_coarse_step(x_k, ...
-                params.L_level_full, s, params.R_level_full, params.P_level_full, k, params, ...
+                params.L_level_full, params.R_level_full, params.P_level_full, k, params, ...
                 params.Lf_level_full, level_no, grad_F_mu, obj_f_x_k, []);
             
             % Save history whenever a coarse step is ATTEMPTED, even if s_k=0 ---
@@ -78,6 +78,8 @@ function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f,
         if attempt_coarse_step && s_k ~= 0
             % --- Successful Coarse Correction Step ---
             y_k_plus_1 = y_k_plus_1_coarse;
+            
+            % y_k_plus_1 = max(0, y_k_plus_1);
 
             q = 0; x_tilde = x_k;
             eta_k_plus_1 = Lf_current;
@@ -90,7 +92,7 @@ function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f,
             fprintf('    -> [Level %d] Perfroming prox grad step...\n', level_no);
             grad_at_xk = grad_f(x_k); 
             y_k_plus_1 = prox_op(x_k - (1/Lf_current) * grad_at_xk, lambda/Lf_current);
-            y_k_plus_1 = max(0, y_k_plus_1);
+            % y_k_plus_1 = max(0, y_k_plus_1);
             q = q + 1; 
             
             eta_k_plus_1 = Lf_current;
@@ -118,14 +120,14 @@ function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f,
             history.cumulative_work(k) = total_equivalent_work;
             history.iter(k) = k;
             history.obj_val(k) = obj_f_x_k + obj_g(x_k);
-            history.gt_error(k) = norm(x_k - x_star);
+            % history.gt_error(k) = norm(x_k - x_star);
             history.x_change(k) = norm1(x_k - x_k_old) / numel(x_k);
             
             if history.x_change(k) < params.fine_tolerance && k > 1
                 fprintf('Convergence reached at fine-level iteration %d.\n', k);
                 history.iter = history.iter(1:k);
                 history.obj_val = history.obj_val(1:k);
-                history.gt_error = history.gt_error(1:k);
+                % history.gt_error = history.gt_error(1:k);
                 history.x_change = history.x_change(1:k);
                 history.cumulative_work = history.cumulative_work(1:k);
                 break;

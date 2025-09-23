@@ -78,6 +78,8 @@ function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f,
         if attempt_coarse_step && s_k ~= 0
             % --- Successful Coarse Correction Step ---
             y_k_plus_1 = y_k_plus_1_coarse;
+            
+            y_k_plus_1 = max(0, y_k_plus_1);
 
             q = 0; x_tilde = x_k;
             eta_k_plus_1 = Lf_current;

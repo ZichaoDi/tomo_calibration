@@ -76,12 +76,15 @@ function [y_k_plus_1, s_k, total_equivalent_work, d_k] = perform_coarse_step(x_k
             next_level, grad_f_coarse(x_H0), obj_f_coarse(x_H0), v_H_total ...
         );
         total_equivalent_work = work_from_below;
-        
     end
 
     %The correction is calculated and applied at each level on the way back up the recursion.
+    if s_k ~= 0 && next_level ~= length(L_level)
 
         d_k = P * (x_H_final - x_H0);
+   
+
+        sum(d_k)
         
         % if level_no == 1
             % --- TOP LEVEL CALL: Perform the line search to find the optimal step size s_k ---
@@ -124,6 +127,9 @@ function [y_k_plus_1, s_k, total_equivalent_work, d_k] = perform_coarse_step(x_k
             % s_k = 1.0; % Use a fixed step size for intermediate levels
             % y_k_plus_1 = x_k + s_k*d_k; % Apply the full correction
         % end
+    else
+        s_k = 0;
+        y_k_plus_1 = x_k;
 
 end
 

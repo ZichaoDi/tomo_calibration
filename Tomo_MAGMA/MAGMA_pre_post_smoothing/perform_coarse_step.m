@@ -69,13 +69,25 @@ function [y_k_plus_1, s_k, total_equivalent_work, d_k] = perform_coarse_step(x_k
     else
         % --- RECURSIVE STEP: Go one level deeper ---
         fprintf('    -> [Level %d] Recursing to solve problem at Level %d...\n', level_no, next_level);
-        % **KEY CHANGE**: Pass the new v_H_total to the next recursive call.
+        
+        %pre-smoothing
+        prox_op_coarse = @(x, l) x;
+        x_H0_smooth = mfista_solver(obj_f_coarse, @(x) 0, grad_f_coarse, prox_op_coarse, x_H0, Lf_level{next_level}, lambda, NH,params.tolerance);
+
         % Also pass the full gradient of the new coarse objective.
         [x_H_final, s_k, work_from_below, d_k] = perform_coarse_step( ...
-            x_H0, L_level, s, R_level, P_level, k, params, Lf_level, ...
-            next_level, grad_f_coarse(x_H0), obj_f_coarse(x_H0), v_H_total ...
+            x_H0_smooth, L_level, s, R_level, P_level, k, params, Lf_level, ...
+            next_level, grad_f_coarse(x_H0_smooth), obj_f_coarse(x_H0_smooth), v_H_total ...
         );
-        total_equivalent_work = work_from_below;
+
+        %post-smoothing
+        prox_op_coarse = @(x, l) x;
+        x_H_final = mfista_solver(obj_f_coarse, @(x) 0, grad_f_coarse, prox_op_coarse, x_H_final, Lf_level{next_level}, lambda, NH,params.tolerance);
+
+        smooth_level_factor = get_work_factor(next_level);
+        smooth_equivalent_work = NH * smooth_level_factor;
+
+        total_equivalent_work = work_from_below + 2*smooth_equivalent_work;
         
     end
 
@@ -92,6 +104,7 @@ function [y_k_plus_1, s_k, total_equivalent_work, d_k] = perform_coarse_step(x_k
     
             if descent_term >= 0
                 fprintf('    -> Warning: Coarse direction is not a descent direction. Taking zero step.\n');
+                descent_term
                 y_k_plus_1 = x_k; s_k = 0;
                 return;
             else
@@ -115,7 +128,7 @@ function [y_k_plus_1, s_k, total_equivalent_work, d_k] = perform_coarse_step(x_k
             % y_k_plus_1 = x_k + s_k * d_k; % Apply correction with optimal step size
             % Ensure non-negativity before returning
     
-            y_k_plus_1 = max(0, y_k_plus_1);
+            % y_k_plus_1 = max(0, y_k_plus_1);
             
         % else
             % --- RECURSIVE SUB-CALL: Apply correction with a fixed step size of 1 ---
