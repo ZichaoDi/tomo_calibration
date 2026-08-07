@@ -1,4 +1,5 @@
 function [L_level, R_level, P_level, N_vec, Lf_level] = setup_multilevel_operators_new(L_fine, Nx, num_levels)
+global N_vec
 % Purpose:
 %   Generates system matrices (L), restriction (R), and prolongation (P)
 %   operators.
@@ -52,12 +53,12 @@ function [L_level, R_level, P_level, N_vec, Lf_level] = setup_multilevel_operato
         R = sparse(kron(IhH_1D, IhH_1D));
         P = sparse(R');
 
-        R_level{level} = (0.25)*R;
-        P_level{level} = (4)*P;
+        R_level{level} = (1/4)*R;
+        P_level{level} = (1)*P;
         fprintf('  -> Stored R and P for level %d.\n', level);
 
         L_fine_current = L_level{level};
-        L_coarse_next = sparse(L_fine_current * P);
+        L_coarse_next = sparse(R*L_fine_current * R');
         L_level{level + 1} = L_coarse_next;
         fprintf('  -> Generated L for level %d.\n', level + 1);
 

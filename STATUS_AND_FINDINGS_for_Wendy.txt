@@ -1,0 +1,224 @@
+MAGMA/MISTA Multilevel CT Reconstruction — Status & Root-Cause Findings
+Parth Brahmbhatt | Prepared for Dr. Zichao (Wendy) Di
+================================================================================
+
+1. GOAL
+--------
+Accelerate ell1/TV-regularized CT reconstruction
+
+    min_x  ||A x - b||^2 + lambda * R(x)
+
+using multilevel/multigrid optimization, by analogy with:
+  - Nash (2000) MG/OPT, and Wendy's own multigrid-for-ptychography paper
+    (Fung & Di, SIAM J. Imaging Sci. 2020, doi:10.1137/18M1223915), and
+  - Panos Parpas's multilevel composite-optimization papers:
+      * MAGMA: Hovhannisyan, Parpas, Zafeiriou, SIAM J. Imaging Sci. 2016
+        ("Multilevel Accelerated Gradient Mirror Descent Algorithm")
+      * MISTA: Parpas, SIAM J. Sci. Comput. 2017
+        ("A Multilevel Proximal Gradient Algorithm for a Class of
+        Composite Optimization Problems")
+
+2. RESULT
+---------
+Not achieved. The code runs and produces reconstructions, but the
+multilevel/coarse-correction step does not deliver the accuracy-per-unit-work
+improvement over plain FISTA that the papers' theory promises, across every
+variant that was tried (see Section 4). This is not attributed to an
+implementation bug that a fix would resolve; it is a structural mismatch
+between what MAGMA/MISTA's multilevel construction assumes and what a
+tomography forward operator actually looks like. Section 5 explains why, and
+Section 6 lists concrete directions that would need to be pursued to make
+multilevel acceleration work for this problem.
+
+3. WHY PLAIN MG/OPT WAS RULED OUT FIRST
+----------------------------------------
+Standard MG/OPT (Nash 2000), the framework behind Wendy's MG_tomo starter
+code, is derived for smooth objectives. Our objective has a non-smooth
+ell1/TV term, so a direct MG/OPT coarse-grid correction is not well defined
+for it (this was flagged already in the 7/21/25 SASSy presentation,
+slide "Multi Grid Approach to Tomography Reconstruction": "MG-opt for the
+composite objective will not work"). That is what motivated moving to
+Parpas's MAGMA/MISTA, which were built specifically to extend multilevel
+acceleration to the smooth + non-smooth composite case.
+
+4. WHAT WAS TRIED (chronological)
+----------------------------------
+All under tomo_MAGMA/MAGMA_0/ and tomo_MAGMA/tomo_MISTA/:
+
+  Jul 2025   MAGMA_old/MAGMA_2_level, MAGMA_multilevel_old/new
+             First direct ports of the MAGMA algorithm (Alg. 2/3 of the
+             paper) to the tomography forward operator L.
+
+  Aug-Sep25  MAGMA_mulitlevel_new_step_tracking, correct_obj_recourse,
+             pre_post_smoothing, pre_post_laplacian
+             Successive attempts to stabilize the coarse-correction step:
+             tracking equivalent work explicitly, correcting the coarse
+             objective's linear coherence term, and adding pre/post
+             smoothing (incl. a Laplacian regularizer) around the coarse
+             step to damp oscillations.
+
+  Nov 2025   MR_FISTA/
+             Rewrite based more directly on Panos's own original code
+             (Panos Code/Archive/SolveMRFISTA.m, written for a
+             face-recognition / dictionary sparse-coding problem) adapted
+             to the tomography operator.
+
+  (latest)   tomo_MISTA/ (separate git repo, "Piece 1" - "Piece 5")
+             https://github.com/Parth-B7999/tomo-MISTA
+             The most careful attempt: rebuilt from scratch with unit
+             tests at each stage (commit history = the build-up itself,
+             "Piece 1" forward model through "Piece 5" two-sided
+             restriction). Piece 5 explicitly diagnoses and addresses the
+             root cause described below ("one-sided" vs. "two-sided"
+             restriction) and is the closest the project got to a
+             principled fix. Its tests confirm internal correctness
+             (first-order coherence identity holds to ~1e-15, objective
+             decreases monotonically, coarse steps are actually taken),
+             but do not show a wall-clock or iteration-count win over
+             plain FISTA on the reconstruction task itself. This repo is
+             the best entry point for anyone picking the diagnosis back
+             up -- start at tests/test_05_benchmark.m.
+
+5. ROOT CAUSE
+-------------
+MAGMA/MISTA's multilevel construction, as published, assumes a
+dictionary-style coarsening where the fine and coarse problems keep the
+same rank character. The tomography forward operator does not have a
+natural analogue of that under image-only coarsening, and every attempt to
+patch the coherence/smoothing term to compensate ran into the
+ill-conditioning of the CT operator. In more detail:
+
+  a) Different notion of "coarse level."
+     In the MAGMA paper (Sec 3.1.1, p.1838) and in Panos's own
+     SolveMRFISTA.m, the restriction operator R coarsens *columns of the
+     dictionary matrix A* in a LASSO/face-recognition problem -- A there is
+     a fixed, reasonably well-behaved dictionary. Applied to tomography,
+     "coarsening" was implemented as downsampling the image grid and
+     rebuilding L_coarse = L_fine * P algebraically, while the
+     measurement/sinogram side (rows of L, i.e. angles/detector bins) was
+     initially left at full fine resolution ("one-sided" restriction).
+
+  b) That one-sided restriction inverts the problem's structure.
+     The fine CT system is underdetermined (few projection angles, many
+     unknown pixels). A one-sided coarse system A_c = A*P keeps the same
+     number of measurements but a quarter of the unknowns, so it becomes
+     comparatively OVERdetermined -- the opposite character from the fine
+     problem. tomo_MISTA/tests/test_05_benchmark.m measures this directly:
+     with one-sided restriction the required first-order-coherence
+     correction term v_H (Eq. 3.3 in the MAGMA paper) becomes very large,
+     so the coarse-corrected search direction collapses to "little more
+     than a gradient step" -- no real acceleration, and a source of
+     instability at high lambda / low iteration counts. A "two-sided" fix
+     (also restricting the sinogram, so A_c = R_s * A * P) shrinks v_H
+     substantially and is the theoretically correct move, but was only
+     validated on internal consistency checks, not shown to beat FISTA in
+     practice.
+
+  c) Panos's own code flags the same approximation as shaky.
+     SolveMRFISTA.m (Panos Code/Archive/) contains this comment verbatim:
+       "WORNING: this is only heuristic! With smoothed coarse the
+       coherence becomes: grad(F_H)=grad(f_h). Not quite what we want."
+     i.e., even in the original author's code, the smoothed-coherence
+     shortcut used to make the coarse model differentiable is flagged as
+     not rigorous -- before it was ever applied to a harder, more
+     ill-conditioned operator.
+
+  d) The CT operator amplifies these approximation errors.
+     The tomography system matrix is severely ill-conditioned (see the
+     SASSy slide: "Projection Matrix (Very ill-conditioned)"), far more so
+     than the dictionaries MAGMA was validated on. Any residual error in
+     v_H, or bias from the fixed-mu pseudo-Huber smoothing of the L1 term
+     used to make the composite gradient differentiable (mu was held
+     constant rather than annealed, unlike the smoothing schedule implied
+     by the paper's Sec. 2.5 framework), gets amplified rather than
+     damped by L^T*L.
+
+  e) Non-negativity was patched in outside the theory.
+     The physical image must be >= 0, but MAGMA's convergence proof (Sec.
+     3, Lemma 2.1/2.3/2.5, Thm 2.6) is stated for the declared
+     g(x)=lambda*||x||_1 only. Clipping to zero after the fact
+     (max(0, y_{k+1}), visible commented out in later solver versions) is
+     mathematically equivalent to the correct proximal operator ONLY if
+     applied identically at every level (fine and coarse); it was not
+     applied consistently everywhere the theory requires it, which can
+     produce a coarse-corrected direction that argues for pixel values the
+     fine-level constraint would reject.
+
+6. RECOMMENDED DIRECTIONS (if this is picked back up)
+-------------------------------------------------------
+These are not "fixes" to the existing code so much as different starting
+assumptions:
+
+  1. Rebuild the coarse forward operator from the physics, not algebra.
+     Instead of L_coarse = R * L_fine * P (a purely algebraic/Galerkin
+     restriction of the fine matrix), regenerate the coarse-level Radon
+     system directly at the coarse image resolution AND a coarser
+     angle/detector sampling using the same generator (XTM_Tensor_XH), the
+     way classical geometric multigrid re-discretizes a PDE operator on
+     each grid rather than algebraically projecting the fine one. This is
+     the tomography analogue of the "tailored restriction and
+     prolongation operators that exploit the hierarchical structure" Wendy
+     used for ptychography (Fung & Di 2020) -- domain-specific R/P built
+     from the imaging physics, not generic operators borrowed from a
+     dictionary-learning problem.
+
+  2. Make restriction two-sided everywhere, consistently.
+     Carry tomo_MISTA's Piece-5 two-sided construction (restrict both
+     image and sinogram) through as the only supported mode, and drop the
+     one-sided path entirely -- it is diagnosably worse by the algorithm's
+     own theory (large v_H), not just empirically.
+
+  3. Anneal mu instead of fixing it.
+     Tie the L1-smoothing parameter mu to the current desired accuracy
+     (shrink it as the algorithm proceeds, or per level) per the
+     smoothing framework in MAGMA Sec. 2.5, rather than using one fixed
+     mu = 1e-4 for the whole run. This removes a persistent bias in v_H
+     that has nothing to do with the multilevel idea itself.
+
+  4. Apply the non-negativity constraint identically at every level.
+     Fold x>=0 explicitly into g(x) at both fine and coarse levels
+     (g(x) = lambda*||x||_1 + indicator{x>=0}, whose prox is still
+     closed-form: max(x - lambda/L, 0)) instead of an ad hoc clip applied
+     inconsistently, so the coarse subproblem and the fine subproblem are
+     solving the same constrained problem.
+
+  5. Benchmark against a work-matched baseline across regimes, not just
+     unit tests. tomo_MISTA's Part A/B benchmark suggests multilevel
+     correction may only pay off in the severely rank-deficient /
+     limited-angle regime (few projection angles), not for well-determined
+     scans. Before investing further in the MAGMA/MISTA formulation
+     specifically, it would be worth mapping out whether *any* fixed
+     variant beats FISTA at equal computational work, and in which regime
+     -- using the equivalent-work accounting already implemented in
+     magma_solver.m / mrfista_solver.m.
+
+  6. Consider a geometric-multigrid (FAS-style) reformulation instead of
+     forcing MAGMA's decision rule.
+     Rather than the current heuristic "attempt a coarse step vs. take a
+     gradient step" branch (kappa/theta/Kd thresholds), a Full
+     Approximation Scheme V-cycle -- coarse level solves for a defect
+     correction against a properly re-discretized coarse operator (per
+     item 1), with an ISTA/FISTA proximal smoother applied pre- and
+     post-correction -- is closer to what the pre_post_smoothing /
+     pre_post_laplacian experiments were reaching for ad hoc, but would
+     need to be derived and justified formally rather than patched in.
+
+7. FILE MAP (for reference)
+----------------------------
+  tomo_MAGMA/MAGMA.pdf, MISTA.pdf         - Parpas et al. reference papers
+  Docs/Multigrid/10.1137@18M1223915.pdf   - Fung & Di ptychography paper
+  tomo_MAGMA/PPT/Multigrid_CT_Parth.pdf   - 7/21/25 SASSy presentation
+  tomo_MAGMA/MG_Wendy/MG_tomo.zip         - starter MG/OPT code (6/17/25)
+  tomo_MAGMA/Panos Code/Archive/          - Parpas's original FR/LASSO code
+  tomo_MAGMA/MAGMA_0/MAGMA_old/           - first MAGMA ports (Jul 2025)
+  tomo_MAGMA/MAGMA_0/tomography_MAGMA/    - later MAGMA variants (Aug-Nov)
+      MAGMA_pre_post_smoothing/
+      MAGMA_pre_post_laplacian/
+      MAGMA_mulitlevel_correct_obj_recourse/
+      MAGMA_mulitlevel_new_step_tracking/
+      MR_FISTA/                           - Nov 2025 rewrite
+      RP_operators/                       - restriction/prolongation setup
+  tomo_MAGMA/tomo_MISTA/                  - most recent, test-driven rewrite
+      (also at github.com/Parth-B7999/tomo-MISTA -- see commit history)
+      solvers/mrfista.m                   - two-sided MR-FISTA (final form)
+      tests/test_05_benchmark.m           - root-cause diagnostic benchmark

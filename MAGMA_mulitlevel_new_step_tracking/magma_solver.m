@@ -48,11 +48,8 @@ function [x, history, equivalent_work_done] = magma_solver(obj_f, obj_g, grad_f,
         grad_at_xk = grad_f(x_k);
         
         % for 3 or more level; the objective funciotn is already smooth so no need smooth part
-        if is_fine_level
-            grad_g_mu = (lambda * x_k) ./ sqrt(mu^2 + x_k.^2);
-        else
-            grad_g_mu = 0;
-        end
+        grad_g_mu = (lambda * x_k) ./ sqrt(mu^2 + x_k.^2);
+        
 
         grad_F_mu =  grad_at_xk + grad_g_mu;
 

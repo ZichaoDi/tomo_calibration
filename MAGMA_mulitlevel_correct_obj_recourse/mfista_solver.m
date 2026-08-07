@@ -31,7 +31,7 @@ for k = 1:max_iters
     
     % Store the current point and calculate its objective value
     x_k_old = x_k;
-    % F_k_old = obj_f(x_k_old) + obj_g(x_k_old);
+    F_k_old = obj_f(x_k_old) + obj_g(x_k_old);
     
     % --- Step 1: Calculate the potential next iterate using a standard FISTA step ---
     grad_y = grad_f(y_k);

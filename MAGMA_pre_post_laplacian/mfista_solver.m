@@ -31,7 +31,7 @@ for k = 1:max_iters
     
     % Store the current point and calculate its objective value
     x_k_old = x_k;
-    % F_k_old = obj_f(x_k_old) + obj_g(x_k_old);
+    F_k_old = obj_f(x_k_old) + obj_g(x_k_old);
     
     % --- Step 1: Calculate the potential next iterate using a standard FISTA step ---
     grad_y = grad_f(y_k);
@@ -40,8 +40,8 @@ for k = 1:max_iters
     prox_step_accelerated = prox_g(y_k - (1/Lf) * grad_y, lambda/Lf);
     
     % Enforce non-negativity constraint, as required by the problem context.
-    x_k_candidate = max(0, prox_step_accelerated);
-    
+    % x_k_candidate = max(0, prox_step_accelerated);
+    x_k_candidate = prox_step_accelerated;
     % --- Step 2: Monotonicity Check ---
     % Calculate the objective value at the potential new point.
     % F_k_candidate = obj_f(x_k_candidate) + obj_g(x_k_candidate);
