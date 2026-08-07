@@ -144,66 +144,7 @@ ill-conditioning of the CT operator. In more detail:
      produce a coarse-corrected direction that argues for pixel values the
      fine-level constraint would reject.
 
-6. RECOMMENDED DIRECTIONS (if this is picked back up)
--------------------------------------------------------
-These are not "fixes" to the existing code so much as different starting
-assumptions:
-
-  1. Rebuild the coarse forward operator from the physics, not algebra.
-     Instead of L_coarse = R * L_fine * P (a purely algebraic/Galerkin
-     restriction of the fine matrix), regenerate the coarse-level Radon
-     system directly at the coarse image resolution AND a coarser
-     angle/detector sampling using the same generator (XTM_Tensor_XH), the
-     way classical geometric multigrid re-discretizes a PDE operator on
-     each grid rather than algebraically projecting the fine one. This is
-     the tomography analogue of the "tailored restriction and
-     prolongation operators that exploit the hierarchical structure" Wendy
-     used for ptychography (Fung & Di 2020) -- domain-specific R/P built
-     from the imaging physics, not generic operators borrowed from a
-     dictionary-learning problem.
-
-  2. Make restriction two-sided everywhere, consistently.
-     Carry tomo_MISTA's Piece-5 two-sided construction (restrict both
-     image and sinogram) through as the only supported mode, and drop the
-     one-sided path entirely -- it is diagnosably worse by the algorithm's
-     own theory (large v_H), not just empirically.
-
-  3. Anneal mu instead of fixing it.
-     Tie the L1-smoothing parameter mu to the current desired accuracy
-     (shrink it as the algorithm proceeds, or per level) per the
-     smoothing framework in MAGMA Sec. 2.5, rather than using one fixed
-     mu = 1e-4 for the whole run. This removes a persistent bias in v_H
-     that has nothing to do with the multilevel idea itself.
-
-  4. Apply the non-negativity constraint identically at every level.
-     Fold x>=0 explicitly into g(x) at both fine and coarse levels
-     (g(x) = lambda*||x||_1 + indicator{x>=0}, whose prox is still
-     closed-form: max(x - lambda/L, 0)) instead of an ad hoc clip applied
-     inconsistently, so the coarse subproblem and the fine subproblem are
-     solving the same constrained problem.
-
-  5. Benchmark against a work-matched baseline across regimes, not just
-     unit tests. tomo_MISTA's Part A/B benchmark suggests multilevel
-     correction may only pay off in the severely rank-deficient /
-     limited-angle regime (few projection angles), not for well-determined
-     scans. Before investing further in the MAGMA/MISTA formulation
-     specifically, it would be worth mapping out whether *any* fixed
-     variant beats FISTA at equal computational work, and in which regime
-     -- using the equivalent-work accounting already implemented in
-     magma_solver.m / mrfista_solver.m.
-
-  6. Consider a geometric-multigrid (FAS-style) reformulation instead of
-     forcing MAGMA's decision rule.
-     Rather than the current heuristic "attempt a coarse step vs. take a
-     gradient step" branch (kappa/theta/Kd thresholds), a Full
-     Approximation Scheme V-cycle -- coarse level solves for a defect
-     correction against a properly re-discretized coarse operator (per
-     item 1), with an ISTA/FISTA proximal smoother applied pre- and
-     post-correction -- is closer to what the pre_post_smoothing /
-     pre_post_laplacian experiments were reaching for ad hoc, but would
-     need to be derived and justified formally rather than patched in.
-
-7. FILE MAP (for reference)
+6. FILE MAP (for reference)
 ----------------------------
   tomo_MAGMA/MAGMA.pdf, MISTA.pdf         - Parpas et al. reference papers
   Docs/Multigrid/10.1137@18M1223915.pdf   - Fung & Di ptychography paper
