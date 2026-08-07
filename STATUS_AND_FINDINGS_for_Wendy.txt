@@ -26,9 +26,7 @@ improvement over plain FISTA that the papers' theory promises, across every
 variant that was tried (see Section 4). This is not attributed to an
 implementation bug that a fix would resolve; it is a structural mismatch
 between what MAGMA/MISTA's multilevel construction assumes and what a
-tomography forward operator actually looks like. Section 5 explains why, and
-Section 6 lists concrete directions that would need to be pursued to make
-multilevel acceleration work for this problem.
+tomography forward operator actually looks like. Section 5 explains why.
 
 3. WHY PLAIN MG/OPT WAS RULED OUT FIRST
 ----------------------------------------
